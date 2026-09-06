@@ -1,4 +1,6 @@
 #include "Cygnus.dtsi"
+#include <input/processors.dtsi>
+#include <dt-bindings/zmk/input_transform.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
 &default_transform {
@@ -27,6 +29,14 @@
         compatible = "zmk,input-listener";
         device = <&trackball>;
         input-processors = <&auto_mouse_layer 4 700>;
+
+        scroll_mode {
+            layers = <5>;
+            input-processors = <&zip_xy_to_scroll_mapper>,
+                               <&zip_scroll_scaler 1 8>,
+                               <&zip_scroll_scaler 1 8>,
+                               <&zip_scroll_transform INPUT_TRANSFORM_Y_INVERT>;
+        };
     };
 };
 
@@ -70,7 +80,7 @@
         evt-type = <INPUT_EV_REL>;
         x-input-code = <INPUT_REL_X>;
         y-input-code = <INPUT_REL_Y>;
-        /* Driver-owned automouse/scroll layers are disabled for this test. */
+        /* Automouse and scroll behavior are configured on trackball_listener. */
     };
 };
 
