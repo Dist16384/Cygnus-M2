@@ -144,8 +144,7 @@ function Show-Pmw3610Diagnosis {
 }
 
 function Get-SerialPortInfo {
-    $portNames = @([System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object)
-    $friendlyNames = @{}
+    $presentPorts = @{}
 
     try {
         Get-CimInstance -ClassName Win32_PnPEntity -ErrorAction Stop |
@@ -153,27 +152,40 @@ function Get-SerialPortInfo {
             ForEach-Object {
                 $match = [regex]::Match([string]$_.Name, '\((COM\d+)\)')
                 if ($match.Success) {
-                    $friendlyNames[$match.Groups[1].Value] = [string]$_.Name
+                    $portName = $match.Groups[1].Value.ToUpperInvariant()
+                    $presentPorts[$portName] = [pscustomobject]@{
+                        Port         = $portName
+                        FriendlyName = [string]$_.Name
+                        InstanceId   = [string]$_.DeviceID
+                    }
                 }
             }
     }
     catch {
-        # Port enumeration still works without CIM metadata.
+        # Fall back to SerialPort below if CIM is unavailable.
     }
 
-    foreach ($portName in $portNames) {
-        $friendlyName = if ($friendlyNames.ContainsKey($portName)) {
-            $friendlyNames[$portName]
-        }
-        else {
-            $portName
-        }
+    if ($presentPorts.Count -gt 0) {
+        $presentPorts.Values | Sort-Object Port
+        return
+    }
 
+    foreach ($portName in @([System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object -Unique)) {
         [pscustomobject]@{
-            Port         = $portName
-            FriendlyName = $friendlyName
+            Port         = $portName.ToUpperInvariant()
+            FriendlyName = $portName
+            InstanceId   = ''
         }
     }
+}
+
+function Get-LoggingPortCandidates {
+    param([object[]]$Ports)
+
+    return @($Ports | Where-Object {
+        $_.InstanceId -match '^USB\\' -or
+        $_.FriendlyName -match '(?i)(Cygnus|ZMK|USB.*Serial|CDC)'
+    })
 }
 
 function Resolve-LoggingPort {
@@ -197,9 +209,7 @@ function Resolve-LoggingPort {
             }
         }
         else {
-            $candidates = @($ports | Where-Object {
-                $_.FriendlyName -match '(?i)(Cygnus|ZMK|USB Serial|CDC)'
-            })
+            $candidates = @(Get-LoggingPortCandidates -Ports $ports)
 
             if ($candidates.Count -eq 1) {
                 Write-Host "Auto-detected $($candidates[0].Port): $($candidates[0].FriendlyName)"
@@ -209,12 +219,16 @@ function Resolve-LoggingPort {
                 $list = ($candidates | ForEach-Object { "$($_.Port): $($_.FriendlyName)" }) -join [Environment]::NewLine
                 throw "Multiple USB serial ports were found. Re-run with -Port COMx:`n$list"
             }
-            if ($ports.Count -eq 1) {
-                Write-Host "Using the only serial port found: $($ports[0].Port)"
-                return $ports[0].Port
+
+            $nonLegacyPorts = @($ports | Where-Object {
+                $_.InstanceId -notmatch '^ACPI\\PNP0501'
+            })
+            if ($nonLegacyPorts.Count -eq 1) {
+                Write-Host "Using the only non-legacy serial port found: $($nonLegacyPorts[0].Port)"
+                return $nonLegacyPorts[0].Port
             }
-            if ($ports.Count -gt 1) {
-                $list = ($ports | ForEach-Object { "$($_.Port): $($_.FriendlyName)" }) -join [Environment]::NewLine
+            if ($nonLegacyPorts.Count -gt 1) {
+                $list = ($nonLegacyPorts | ForEach-Object { "$($_.Port): $($_.FriendlyName)" }) -join [Environment]::NewLine
                 throw "Multiple serial ports were found. Re-run with -Port COMx:`n$list"
             }
         }
@@ -385,6 +399,23 @@ function Invoke-SelfTest {
         }
         Write-Host "PASS: $($case.Name)"
     }
+
+    $enumeratedPorts = @(Get-SerialPortInfo)
+    $duplicates = @($enumeratedPorts | Group-Object Port | Where-Object { $_.Count -gt 1 })
+    if ($duplicates.Count -gt 0) {
+        throw "Self-test failed: duplicate COM ports returned: $($duplicates.Name -join ', ')"
+    }
+    Write-Host 'PASS: Serial port enumeration removes duplicate and ghost entries'
+
+    $mockPorts = @(
+        [pscustomobject]@{ Port = 'COM1'; FriendlyName = 'Legacy serial port'; InstanceId = 'ACPI\PNP0501\0' },
+        [pscustomobject]@{ Port = 'COM238'; FriendlyName = 'Localized device name'; InstanceId = 'USB\VID_1D50&PID_615E' }
+    )
+    $mockCandidates = @(Get-LoggingPortCandidates -Ports $mockPorts)
+    if ($mockCandidates.Count -ne 1 -or $mockCandidates[0].Port -ne 'COM238') {
+        throw 'Self-test failed: USB COM port selection is not locale independent'
+    }
+    Write-Host 'PASS: USB COM port selection is locale independent'
 }
 
 if ($PSCmdlet.ParameterSetName -eq 'SelfTest') {
