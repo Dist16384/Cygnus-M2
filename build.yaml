@@ -21,11 +21,14 @@ include:
  - board: seeeduino_xiao_ble
    shield: Cygnus_R rgbled_adapter
    snippet: studio-rpc-usb-uart
+   artifact-name: Cygnus_R_central
  - board: seeeduino_xiao_ble
    shield: Cygnus_R rgbled_adapter
    snippet: zmk-usb-logging
    artifact-name: Cygnus_R_pmw3610_usb_logging
  - board: seeeduino_xiao_ble
    shield: Cygnus_L rgbled_adapter
+   artifact-name: Cygnus_L_peripheral
  - board: seeeduino_xiao_ble
    shield: settings_reset
+   artifact-name: Cygnus_settings_reset
